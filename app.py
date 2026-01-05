@@ -23,11 +23,17 @@ st.markdown("""
         height: 3em;
         background-color: #FF4B4B;
         color: white;
+        font-weight: bold;
     }
     .prediction-text {
-        font-size: 24px;
+        font-size: 32px;
         font-weight: bold;
         color: #00FFCC;
+        background-color: #1e2130;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        border: 1px solid #00FFCC;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -35,11 +41,13 @@ st.markdown("""
 # --- Load Assets ---
 @st.cache_resource
 def load_assets():
-    # Loading model and data
+    # Load the trained Random Forest model and the Scaler
     model = pickle.load(open('instagram_model_final.pkl', 'rb'))
+    scaler = pickle.load(open('scaler.pkl', 'rb'))
+    
+    # Load cleaned data for stats
     df = pd.read_csv('instaData_cleaned.csv')
     
-    # Pre-calculating averages for the 'Smart Predictor' logic
     stats = {
         'likes': df['Likes'].mean(),
         'saves': df['Saves'].mean(),
@@ -49,9 +57,9 @@ def load_assets():
         'follows': df['Follows'].mean(),
         'total_posts': len(df)
     }
-    return model, stats, df
+    return model, scaler, stats, df
 
-model, avg_stats, raw_df = load_assets()
+model, scaler, avg_stats, raw_df = load_assets()
 
 # --- Sidebar Navigation ---
 st.sidebar.image("https://cdn-icons-png.flaticon.com/512/174/174855.png", width=50)
@@ -61,96 +69,92 @@ page = st.sidebar.radio("Navigate", ["🚀 Predictor", "ℹ️ About the Model"]
 # --- PAGE 1: PREDICTOR ---
 if page == "🚀 Predictor":
     st.title("📸 Instagram Reach Predictor")
+    st.markdown("Predict your post's total impressions using AI trained on engagement patterns.")
     st.markdown("---")
     
     col1, col2 = st.columns([1, 1], gap="large")
 
     with col1:
-        st.subheader("📝 Content Details")
+        st.subheader("📝 Content Strategy")
         caption = st.text_area(
             "Post Caption", 
-            placeholder="Write your caption here...",
-            help="The length of your caption affects how long users stay on your post.",
-            height=200
+            placeholder="What will your post say?",
+            help="Caption length influences user dwell time.",
+            height=150
         )
         hashtags = st.text_area(
             "Hashtags", 
-            placeholder="#example #growth #data",
-            help="Hashtags help the algorithm categorize your content.",
+            placeholder="#data #ai #growth",
+            help="Include the '#' symbol for each hashtag.",
             height=100
         )
         
     with col2:
-        st.subheader("⚙️ Simulation Settings")
-        st.write("By default, we use your account's historical averages for engagement.")
+        st.subheader("⚙️ Engagement Simulation")
+        st.write("Adjust the sliders to see how engagement affects reach.")
         
-        with st.expander("Customize Engagement (Advanced)"):
-            likes = st.slider("Target Likes", 0, int(avg_stats['likes']*5), int(avg_stats['likes']))
-            saves = st.slider("Target Saves", 0, int(avg_stats['saves']*5), int(avg_stats['saves']))
-            shares = st.number_input("Target Shares", 0, 1000, int(avg_stats['shares']))
+        likes = st.slider("Predicted Likes", 0, 5000, int(avg_stats['likes']))
+        saves = st.slider("Predicted Saves", 0, 2000, int(avg_stats['saves']))
+        shares = st.number_input("Predicted Shares", 0, 1000, int(avg_stats['shares']))
+        
+        with st.expander("Advanced Metrics"):
+            comments = st.number_input("Comments", 0, 500, int(avg_stats['comments']))
+            profile_visits = st.number_input("Profile Visits", 0, 1000, int(avg_stats['visits']))
+            follows = st.number_input("New Follows", 0, 100, int(avg_stats['follows']))
 
     st.markdown("---")
+    
     if st.button("Calculate Predicted Reach"):
-        with st.spinner('Analyzing patterns...'):
-            # Feature Engineering
+        with st.spinner('AI is analyzing content signals...'):
+            # 1. Feature Engineering from user input
             cap_len = len(caption)
-            hash_count = len(hashtags.split('#')) - 1
+            hash_count = hashtags.count('#')
             
-            # Prepare Input (Using current sliders/inputs)
-            input_data = np.array([[
-                likes, saves, avg_stats['comments'], shares, 
-                avg_stats['visits'], avg_stats['follows'], cap_len, hash_count
+            # 2. Prepare Input Data (Must match the 8 features used in training)
+            # Order: Likes, Saves, Comments, Shares, Profile Visits, Follows, Caption_Len, Hashtag_Count
+            input_features = np.array([[
+                likes, saves, comments, shares, 
+                profile_visits, follows, cap_len, hash_count
             ]])
             
-            prediction = model.predict(input_data)
+            # 3. SCALE THE DATA (Crucial: Uses the saved scaler.pkl)
+            input_scaled = scaler.transform(input_features)
+            
+            # 4. PREDICT
+            prediction_log = model.predict(input_scaled)
+            
+            # 5. REVERSE LOG TRANSFORMATION (np.expm1)
+            final_reach = np.expm1(prediction_log)[0]
             
             # Results UI
             st.balloons()
-            st.markdown(f"<div class='prediction-text'>Predicted Impressions: {int(prediction[0]):,}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='prediction-text'>Predicted Impressions: {int(final_reach):,}</div>", unsafe_allow_html=True)
             
-            # Contextual Insight
-            if hash_count > 10:
-                st.warning("💡 Pro Tip: Using more than 10 hashtags might reach a broader audience, but ensure they are relevant to avoid 'shadowban' flags.")
-            else:
-                st.info("💡 Insight: Focused hashtags often lead to higher quality reach.")
+            # Insights
+            st.info(f"💡 **Analysis:** Your caption length ({cap_len} chars) and hashtag usage ({hash_count} tags) were factored into this prediction.")
 
 # --- PAGE 2: ABOUT THE MODEL ---
 else:
-    st.title("ℹ️ About InstaReach AI")
+    st.title("ℹ️ About the Technology")
     
-    st.header("1. How the Prediction Works")
+    st.header("1. The Algorithm")
     st.write("""
-    This application utilizes a **Passive Aggressive Regressor**, a specialized Machine Learning algorithm 
-    designed for high-variance social media data. Unlike standard linear models, it adapts quickly 
-    to sudden changes in content performance—perfect for the 'viral' nature of Instagram.
+    This app uses a **Random Forest Regressor**. This model is an 'Ensemble' method, 
+    meaning it combines the predictions of 100 different decision trees to provide 
+    a stable and accurate estimate of reach, even with high-variance social media data.
     """)
     
-    
-    
-    st.header("2. Feature Importance")
-    st.write("The model evaluates your post based on 8 key dimensions:")
-    
-    tab_eng, tab_cont = st.tabs(["Engagement Metrics", "Content Features"])
-    
-    with tab_eng:
-        st.write("""
-        - **Likes & Comments:** Signals general popularity.
-        - **Saves & Shares:** These are 'High-Intent' signals. They tell the Instagram algorithm that your content is valuable enough to be revisited or sent to others.
-        - **Profile Visits:** Indicates that your post successfully sparked curiosity about your brand.
-        """)
-    
-    with tab_cont:
-        st.write(f"""
-        - **Caption Length:** Currently, your captions average **{int(raw_df['Caption'].str.len().mean())}** characters.
-        - **Hashtag Count:** Your data shows an average of **{int(raw_df['Hashtags'].str.count('#').mean())}** hashtags per post.
-        """)
-        
-    
+    st.header("2. Data Preprocessing")
+    st.write("""
+    - **Outlier Stabilization:** Viral 'noise' was replaced with median values to ensure predictions are realistic for everyday content.
+    - **Log Transformation:** We use Logarithmic scaling to handle the exponential growth nature of social media.
+    - **Feature Scaling:** All inputs are standardized using a `StandardScaler` to ensure metrics like 'Likes' and 'Caption Length' are weighted correctly.
+    """)
 
-    st.header("3. Dataset Summary")
+    st.header("3. Dataset Insights")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Posts Analyzed", avg_stats['total_posts'])
-    c2.metric("Avg. Account Reach", f"{int(raw_df['Impressions'].mean()):,}")
-    c3.metric("Model Precision", "92%") # Replace with your actual R2 score if known
+    c1.metric("Posts Analyzed", avg_stats['total_posts'])
+    c2.metric("Median Reach", f"{int(raw_df['Impressions'].median()):,}")
+    c3.metric("Model Stability", "High (Random Forest)")
     
-    st.info("✨ **Creator Tip:** The algorithm heavily favors **Saves**. Focus on 'Saveable' content (infographics, tips, or checklists) to boost your predicted impressions!")
+    st.success("✨ **Pro Tip:** Focus on increasing **Saves**. The model identifies 'Saves' as a primary trigger for the Instagram Explore algorithm!")
